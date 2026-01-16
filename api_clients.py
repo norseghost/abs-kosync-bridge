@@ -44,13 +44,17 @@ class ABSClient:
                         pass
                 return True
             else:
-                # Keep failure visible as warning
-                logger.warning(f"❌ Audiobookshelf Connection Failed: {
-                               r.status_code} - {sanitize_log_data(r.text)}")
+                err_info = sanitize_log_data(r.text)
+                logger.warning(
+                    (f"❌ Audiobookshelf Connection Failed: {r.status_code} "
+                     f"- {err_info}")
+                )
                 return False
         except requests.exceptions.ConnectionError:
-            logger.warning(f"❌ Could not connect to Audiobookshelf at {
-                           self.base_url}. Check URL and Docker Network.")
+            logger.warning(
+                (f"❌ Could not connect to Audiobookshelf at {self.base_url}. "
+                 f"Check URL and Docker Network.")
+            )
             return False
         except Exception as e:
             logger.warning(f"❌ Audiobookshelf Error: {e}")
