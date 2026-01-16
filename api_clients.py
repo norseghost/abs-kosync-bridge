@@ -35,8 +35,9 @@ class ABSClient:
                     first_run = False
 
                 if first_run:
-                    logger.info(f"✅ Connected to Audiobookshelf as user: {
-                                r.json().get('username', 'Unknown')}")
+                    username = r.json().get('username', 'Unknown')
+                    logger.info(
+                        f"✅ Connected to Audiobookshelf as user: {username}")
                     try:
                         open(first_run_marker, 'w').close()
                     except Exception:
