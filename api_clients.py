@@ -3,6 +3,7 @@ import os
 import requests
 import logging
 import time
+import base64
 import hashlib
 from requests.auth import HTTPBasicAuth
 from logging_utils import sanitize_log_data
@@ -266,15 +267,29 @@ class KoSyncClient:
     def __init__(self):
         self.base_url = os.environ.get("KOSYNC_SERVER", "").rstrip('/')
         self.user = os.environ.get("KOSYNC_USER")
-        # Calibre-web expects the plaintext password for Basic Auth
         self.password = os.environ.get("KOSYNC_KEY", "")
 
-        # Pre-configure the Auth object
-        self.auth = HTTPBasicAuth(
-            self.user, self.password) if self.user else None
+        # Manually construct the Basic Auth header to be 100% explicit for CWA
+        if self.user and self.password:
+            auth_pair = f"{self.user}:{self.password}"
+            b64_auth = base64.b64encode(
+                auth_pair.encode('ascii')).decode('ascii')
+            self.auth_header = f"Basic {b64_auth}"
+        else:
+            self.auth_header = None
 
     def is_configured(self):
-        return bool(self.base_url and self.user)
+        return bool(self.base_url and self.user and self.auth_header)
+
+    def _get_headers(self, extra_headers=None):
+        """Helper to ensure the correct auth and accept headers are always sent."""
+        headers = {
+            "Authorization": self.auth_header,
+            "accept": "application/vnd.koreader.v1+json"
+        }
+        if extra_headers:
+            headers.update(extra_headers)
+        return headers
 
     def _mark_first_run(self):
         """Helper to manage the first-run log message and marker file."""
@@ -294,19 +309,16 @@ class KoSyncClient:
             logger.warning("⚠️ KoSync not configured (skipping)")
             return False
 
-        # Calibre-web/Koreader API usually prefers this header
-        headers = {'accept': 'application/vnd.koreader.v1+json'}
-
         try:
             # Try primary healthcheck endpoint
             url = f"{self.base_url}/healthcheck"
-            r = requests.get(url, auth=self.auth, headers=headers, timeout=5)
+            r = requests.get(url, headers=self._get_headers(), timeout=5)
 
             # If 404 or fail, try the progress test endpoint
             if r.status_code != 200:
                 url_test = f"{self.base_url}/syncs/progress/test-connection"
-                r = requests.get(url_test, auth=self.auth,
-                                 headers=headers, timeout=5)
+                r = requests.get(
+                    url_test, headers=self._get_headers(), timeout=5)
 
             if r.status_code == 200:
                 self._mark_first_run()
@@ -323,11 +335,9 @@ class KoSyncClient:
         if not self.is_configured():
             return 0.0, None
 
-        headers = {'accept': 'application/vnd.koreader.v1+json'}
         url = f"{self.base_url}/syncs/progress/{doc_id}"
-
         try:
-            r = requests.get(url, auth=self.auth, headers=headers, timeout=10)
+            r = requests.get(url, headers=self._get_headers(), timeout=10)
             if r.status_code == 200:
                 data = r.json()
                 pct = float(data.get('percentage', 0))
@@ -342,12 +352,7 @@ class KoSyncClient:
         if not self.is_configured():
             return False
 
-        headers = {
-            'accept': 'application/vnd.koreader.v1+json',
-            'content-type': 'application/json'
-        }
         url = f"{self.base_url}/syncs/progress"
-
         payload = {
             "document": doc_id,
             "percentage": percentage,
@@ -358,15 +363,21 @@ class KoSyncClient:
         }
 
         try:
-            r = requests.put(url, auth=self.auth,
-                             headers=headers, json=payload, timeout=10)
+            headers = self._get_headers({'content-type': 'application/json'})
+            r = requests.put(url, headers=headers, json=payload, timeout=10)
+
             if r.status_code in (200, 201, 204):
-                logger.debug(f"📡 KoSync Updated: {
-                             percentage:.1%} for {doc_id}")
+                # Concatenation fix for LSP formatter
+                logger.debug(
+                    (f"📡 KoSync Updated: {percentage:.1%} "
+                     f"for {doc_id}")
+                )
                 return True
             else:
-                logger.error(f"Failed to update KoSync: {
-                             r.status_code} - {r.text}")
+                logger.error(
+                    (f"Failed to update KoSync: {r.status_code} "
+                     f"- {r.text}")
+                )
                 return False
         except Exception as e:
             logger.error(f"Failed to update KoSync: {e}")
